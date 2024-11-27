@@ -27,6 +27,154 @@
     <script type="text/javascript" src="nes.js"></script>
     <script type="text/javascript">
       var nes;
+// Global variable to store the user's name
+var userName = null;
+
+// Function to start the application
+async function startApp() {
+  init();
+  await populateRomListFromQDN();
+  // Set up the "Select ROM" button
+  document.getElementById('selectRomButton').onclick = selectRom;
+  // Set up the "Publish ROM" button to initially act as login button
+  document.getElementById('publishRomButton').onclick = login;
+}
+
+// Function to populate the ROM list from QDN
+async function populateRomListFromQDN() {
+  try {
+    const response = await qortalRequest({
+      action: "SEARCH_QDN_RESOURCES",
+      service: "GAME",
+      identifier: "qdnes-",
+      includeMetadata: true,
+      mode: "ALL"
+    });
+
+    const romList = document.getElementById('romList');
+
+    // Clear existing options
+    romList.innerHTML = '';
+
+    // Add an empty option at the top
+    let emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.text = '';
+    romList.appendChild(emptyOption);
+
+    // Loop through the response and add options
+    response.forEach(resource => {
+      let option = document.createElement('option');
+      option.value = JSON.stringify({
+        name: resource.name,
+        identifier: resource.identifier
+      });
+      option.text = resource.metadata.title || resource.identifier;
+      romList.appendChild(option);
+    });
+  } catch (error) {
+    console.error('Error populating ROM list from QDN:', error);
+  }
+}
+
+// Function to handle selecting a local ROM file
+function selectRom() {
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.nes';
+
+  input.onchange = function(event) {
+    var file = event.target.files[0];
+    var reader = new FileReader();
+
+    reader.onload = function(e) {
+      putMessage('Loading done.');
+      run(e.target.result);
+    };
+
+    reader.onerror = function(e) {
+      putMessage('Failed to load ROM.');
+    };
+
+    reader.readAsArrayBuffer(file);
+
+    putMessage('');
+    putMessage('Loading ROM image from local file...');
+    ROMloaded();
+  };
+
+  input.click();
+}
+
+// Function to handle publishing a ROM to QDN
+async function publishRom() {
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.nes';
+
+  input.onchange = async function(event) {
+    var file = event.target.files[0];
+
+    if (!userName) {
+      alert('User name not available. Please login first.');
+      return;
+    }
+
+    // Create identifier from file name
+    var filename = file.name;
+    var gameName = filename.replace('.nes', '')
+    var identifier = `qdnes-${gameName}`;
+
+    // Publish to QDN
+    try {
+      const response = await qortalRequest({
+        action: "PUBLISH_QDN_RESOURCE",
+        name: userName, // Publisher must own a registered name
+        service: "GAME",
+        identifier: identifier,
+        file: file, // File Object.
+        filename: filename,
+        title: gameName
+      });
+
+      alert('ROM published successfully!');
+      // Refresh the ROM list to include the newly published ROM
+      await populateRomListFromQDN();
+    } catch (error) {
+      console.error('Error publishing ROM:', error);
+      alert('Failed to publish ROM.');
+    }
+  };
+
+  input.click();
+}
+
+// Function to handle user login
+async function login() {
+  try {
+    const account = await qortalRequest({
+      action: "GET_USER_ACCOUNT"
+    });
+
+    const response = await qortalRequest({
+      action: "GET_ACCOUNT_NAMES",
+      address: account.address
+    });
+
+    if (response.length > 0) {
+      userName = response[0].name;
+      const publishButton = document.getElementById('publishRomButton');
+      publishButton.innerText = 'Publish ROM';
+      publishButton.onclick = publishRom;
+    } else {
+      alert('You need to have a registered name to publish a ROM.');
+    }
+  } catch (error) {
+    console.error('Error during login:', error);
+    alert('Login failed.');
+  }
+}
+
 
       // buttons status update methods
 
@@ -95,26 +243,31 @@
       /**
        *
        */
+      // Function to handle loading a ROM from QDN
       function loadRom() {
-        var url = document.getElementById('romList').selectedOptions[0].value;
-
+        var selectedOption = document.getElementById('romList').selectedOptions[0];
+        var value = selectedOption.value;
+        if (!value) {
+          alert('Please select a ROM to load.');
+          return;
+        }
+        var resourceInfo = JSON.parse(value);
+        var name = resourceInfo.name;
+        var identifier = resourceInfo.identifier;
+        var url = `/arbitrary/GAME/${name}/${identifier}`;
         var request = new XMLHttpRequest();
         request.responseType = 'arraybuffer';
-
         request.onload = function() {
           putMessage('Loading done.');
           run(request.response);
         };
-
         request.onerror = function(e) {
-          putMessage('failed to load.');
+          putMessage('Failed to load ROM from QDN.');
         };
-
         request.open('GET', url, true);
         request.send(null);
-
-        putMessage('')
-        putMessage('Loading rom image...')
+        putMessage('');
+        putMessage('Loading ROM image from QDN...');
         ROMloaded();
       }
 
@@ -299,7 +452,7 @@
       window.addEventListener('dragover', dragOverHandler, false);
     </script>
   </head>
-  <body onload="init()">
+  <body onload="startApp()">
 
     <p>
       <canvas id="mainCanvas" width="256" height="240"
@@ -350,7 +503,9 @@
       <select id="romList">
         <option value=""></option>
       </select>
-      <button id="loadROMButton" onclick="loadRom()">load rom</button><br />
+      <button id="loadROMButton" onclick="loadRom()">Load ROM</button>
+      <button id="selectRomButton">Select ROM</button>
+      <button id="publishRomButton">Login</button><br />
       Select rom from the list or drag and drop your own rom into this window to start.
     </p>
 
@@ -375,7 +530,7 @@
     </p>
 
     <p>
-      Source code at https://github.com/takahirox/nes-js
+      Original source code at https://github.com/takahirox/nes-js
     </p>
 
   </body>
